@@ -94,11 +94,20 @@ function sysCall_init()
     control_flag_last_time=0
     -- time remaining for this control flag before another decision
     
-    ctrl_angle_x=0
-    ctrl_angle_y=0 -- 0, -0.1, 0.1. angle.
 
-    ctrl_angle_max=0.1 -- max angle allowed for flight(rad)
-    descend_flag_max=0.05 -- max descend speed
+    ctrl_speed_x=0
+    ctrl_speed_y=0 -- [-2, 2]. speed.
+
+    ctrl_speed_max=0.3
+
+    ctrl_angle_x=0
+    ctrl_angle_y=0 -- [-0.1, 0.1]. angle.
+    
+    ctrl_angle_max=0.15 -- max angle allowed for flight(rad):0.3
+
+    linearSpeed_midway={0,0,0}
+
+    descend_flag_max=0.02 -- max descend speed
 
     target_height=targetPos[3]
     target_height_change_speed=0 --landing or rising speed
@@ -117,7 +126,11 @@ function sysCall_actuation()
     s=sim.getObjectSizeFactor(d)
     pos=sim.getObjectPosition(d,-1)
     euler=sim.getObjectOrientation(d,targetObj)
-    linearSpeed, angularSpeed=sim.getObjectVelocity(d)
+    linearSpeed_resolute, angularSpeed=sim.getObjectVelocity(d)
+    linearSpeed = {0,0,0}
+    --speed in self axis
+    linearSpeed[1] = linearSpeed_resolute[1]*math.cos(euler[3])+linearSpeed_resolute[2]*math.sin(euler[3])
+    linearSpeed[2] = linearSpeed_resolute[2]*math.cos(euler[3])+linearSpeed_resolute[1]*math.sin(euler[3])
 
     if (fakeShadow) then
         itemData={pos[1],pos[2],0.002,0,0,1,0.2*s}
@@ -127,7 +140,7 @@ function sysCall_actuation()
 
     ------------------ Visual Controller -------------------------------------
     if(control_flag_last_time<1) then
-        if(math.abs(euler[1]) < 0.1 and math.abs(euler[2]) < 0.1) then
+        if(math.abs(euler[1]) < 0.3 and math.abs(euler[2]) < 0.3) then
             
             --visual
             imageBuffer = sim.getVisionSensorImage(zed_vision0)
@@ -160,11 +173,11 @@ function sysCall_actuation()
             if(minx < 10000 and miny < 10000)then
 
                 -- descending
-                ctrl_angle_x = ((maxx + minx)/xlen-1)*ctrl_angle_max
-                ctrl_angle_y = ((maxy + miny)/ylen-1)*ctrl_angle_max
+                ctrl_speed_x = ((maxx + minx)/xlen-1)*ctrl_speed_max
+                ctrl_speed_y = ((maxy + miny)/ylen-1)*ctrl_speed_max
 
                 -- descend faster if centered (-0.2, 0.8)
-                descend_flag = 0.8 - math.max(math.abs(ctrl_angle_x), math.abs(ctrl_angle_y)) / ctrl_angle_max
+                descend_flag = 0.8 - math.max(math.abs(ctrl_speed_x), math.abs(ctrl_speed_y)) / ctrl_speed_max
                 print(descend_flag)
 
                 -- if about to land: descend slower
@@ -173,22 +186,41 @@ function sysCall_actuation()
                         descend_flag = math.min(0, descend_flag)
                     end
                 end
-                control_flag_last_time=5
+                control_flag_last_time=20
             else
                 -- not found: pull up and decelerate
-                descend_flag = -1
-                ctrl_angle_x = ctrl_angle_x * 0.7
-                ctrl_angle_y = ctrl_angle_y * 0.7
-                control_flag_last_time=5
+                descend_flag = -0.3
+                ctrl_speed_x = ctrl_speed_x * 0.7
+                ctrl_speed_y = ctrl_speed_y * 0.7
+                control_flag_last_time=20
             end
-     --   end
+
+            --get linear speed midway: when reached, acc = 0
+            linearSpeed_midway[1]=(linearSpeed[1] + ctrl_speed_x)/2
+            linearSpeed_midway[2]=(linearSpeed[2] + ctrl_speed_y)/2
+
+        end
     end        
     control_flag_last_time=control_flag_last_time-1
     print(control_flag_last_time)
 
+    ------------------ Speed Controller -------------------------------------
+    
     --vertical speed:
     target_height = target_height - descend_flag_max * descend_flag
-    print(target_height)
+    
+    if(((linearSpeed[1] - linearSpeed_midway[1]) * (linearSpeed_midway[1] - ctrl_speed_x)) > -0.01) then
+        ctrl_angle_x = ctrl_speed_x / ctrl_speed_max * ctrl_angle_max
+    else
+        ctrl_angle_x = 0
+    end
+    if((-linearSpeed[2] - linearSpeed_midway[2]) * (linearSpeed_midway[2] - ctrl_speed_y) > -0.01) then
+        ctrl_angle_y = ctrl_speed_y / ctrl_speed_max * ctrl_angle_max
+    else
+        ctrl_angle_y = 0
+    end
+    print(target_height, linearSpeed, linearSpeed_midway, ctrl_speed_x, ctrl_speed_y, ctrl_angle_x, ctrl_angle_y)
+
     ------------------ PID Controller -------------------------------------
 
     -- Vertical control:
@@ -222,6 +254,7 @@ function sysCall_actuation()
         sim.setScriptSimulationParameter(propellerScripts[i],'particleVelocity',particlesTargetVelocities[i])
     end
 end 
+
 
 
 
